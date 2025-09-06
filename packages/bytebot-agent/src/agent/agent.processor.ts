@@ -1,14 +1,7 @@
 import { TasksService } from '../tasks/tasks.service';
 import { MessagesService } from '../messages/messages.service';
 import { Injectable, Logger } from '@nestjs/common';
-import {
-  Message,
-  Role,
-  Task,
-  TaskPriority,
-  TaskStatus,
-  TaskType,
-} from '@prisma/client';
+import { Role, Task, TaskPriority, TaskStatus, TaskType } from '@prisma/client';
 import { AnthropicService } from '../anthropic/anthropic.service';
 import {
   isComputerToolUseContentBlock,
@@ -47,6 +40,19 @@ export class AgentProcessor {
   private isProcessing = false;
   private abortController: AbortController | null = null;
   private services: Record<string, BytebotAgentService> = {};
+  private retryCounts: Record<string, number> = {};
+  private readonly MAX_INTERRUPT_RETRIES = 3;
+  private computerToolFailures: Record<string, number> = {};
+  private computerToolsDisabled: Record<string, boolean> = {};
+
+  private normalizeError(e: unknown): { message: string; stack?: string } {
+    if (e instanceof Error) return { message: e.message, stack: e.stack };
+    try {
+      return { message: typeof e === 'string' ? e : JSON.stringify(e) };
+    } catch {
+      return { message: 'Unknown error' };
+    }
+  }
 
   constructor(
     private readonly tasksService: TasksService,
@@ -177,6 +183,25 @@ export class AgentProcessor {
             ]
           : []),
         ...unsummarizedMessages,
+        // If desktop automation has been disabled for this task, inject an advisory message
+        ...(this.computerToolsDisabled[taskId]
+          ? [
+              {
+                id: '',
+                createdAt: new Date(),
+                updatedAt: new Date(),
+                taskId,
+                summaryId: null,
+                role: Role.USER,
+                content: [
+                  {
+                    type: MessageContentType.Text,
+                    text: 'System notice: Desktop automation tools (computer_*) are unavailable. Do not request computer_* tool calls. Provide next instructions or ask the user for needed information instead.',
+                  },
+                ],
+              },
+            ]
+          : []),
       ];
       this.logger.debug(
         `Sending ${messages.length} messages to LLM for processing`,
@@ -198,13 +223,28 @@ export class AgentProcessor {
         return;
       }
 
-      agentResponse = await service.generateMessage(
-        AGENT_SYSTEM_PROMPT,
-        messages,
-        model.name,
-        true,
-        this.abortController.signal,
-      );
+      try {
+        agentResponse = await service.generateMessage(
+          AGENT_SYSTEM_PROMPT,
+          messages,
+          model.name,
+          true,
+          this.abortController.signal,
+        );
+      } catch (llmErr: unknown) {
+        const { message, stack } = this.normalizeError(llmErr);
+        this.logger.error(
+          `LLM call failed for task ${taskId} (provider=${model.provider}, model=${model.name}): ${message}`,
+          stack,
+        );
+        await this.tasksService.update(taskId, {
+          status: TaskStatus.FAILED,
+          error: message.slice(0, 500) || 'LLM error',
+        });
+        this.isProcessing = false;
+        this.currentTaskId = null;
+        return;
+      }
 
       const messageContentBlocks = agentResponse.contentBlocks;
 
@@ -218,6 +258,7 @@ export class AgentProcessor {
         );
         await this.tasksService.update(taskId, {
           status: TaskStatus.FAILED,
+          error: 'No content blocks returned from model',
         });
         this.isProcessing = false;
         this.currentTaskId = null;
@@ -290,10 +331,11 @@ export class AgentProcessor {
           this.logger.log(
             `Generated summary for task ${taskId} due to token usage (${agentResponse.tokenUsage.totalTokens}/${contextWindow})`,
           );
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const { message: sumMsg, stack: sumStack } = this.normalizeError(error);
           this.logger.error(
-            `Error summarizing messages for task ID: ${taskId}`,
-            error.stack,
+            `Error summarizing messages for task ${taskId}: ${sumMsg}`,
+            sumStack,
           );
         }
       }
@@ -310,6 +352,27 @@ export class AgentProcessor {
         if (isComputerToolUseContentBlock(block)) {
           const result = await handleComputerToolUse(block, this.logger);
           generatedToolResults.push(result);
+
+          // Track failures for computer_* tools (e.g., network/desktop backend issues)
+          if (result.is_error && block.name.startsWith('computer_')) {
+            const failures = (this.computerToolFailures[taskId] || 0) + 1;
+            this.computerToolFailures[taskId] = failures;
+            if (failures >= 2 && !this.computerToolsDisabled[taskId]) {
+              this.computerToolsDisabled[taskId] = true;
+              this.logger.warn(
+                `Disabling further computer_* tool attempts for task ${taskId} after ${failures} failures`,
+              );
+              await this.tasksService.update(taskId, {
+                status: TaskStatus.NEEDS_HELP,
+                error:
+                  'Desktop automation unavailable. Please provide guidance or perform actions manually.',
+              });
+              // Stop further processing iterations until user resumes / takes over
+              this.isProcessing = false;
+              this.currentTaskId = null;
+              return;
+            }
+          }
         }
 
         if (isCreateTaskToolUseBlock(block)) {
@@ -383,22 +446,60 @@ export class AgentProcessor {
 
       // Schedule the next iteration without blocking
       if (this.isProcessing) {
-        setImmediate(() => this.runIteration(taskId));
+        setImmediate(() => {
+          void this.runIteration(taskId);
+        });
       }
-    } catch (error: any) {
-      if (error?.name === 'BytebotAgentInterrupt') {
-        this.logger.warn(`Processing aborted for task ID: ${taskId}`);
+    } catch (err: unknown) {
+      const { message, stack } = this.normalizeError(err);
+      // BytebotAgentInterrupt identification via name or exact message
+      const errName = (err as { name?: string } | undefined)?.name;
+      const isInterrupt =
+        errName === 'BytebotAgentInterrupt' ||
+        message === 'BytebotAgentInterrupt';
+      if (isInterrupt) {
+        const current = this.retryCounts[taskId] || 0;
+        if (current < this.MAX_INTERRUPT_RETRIES) {
+          this.retryCounts[taskId] = current + 1;
+          this.logger.warn(
+            `Processing interrupted for task ${taskId}. Retry ${this.retryCounts[taskId]}/${this.MAX_INTERRUPT_RETRIES}`,
+          );
+          // small delay before retry to avoid tight loop
+          setTimeout(() => {
+            if (this.isProcessing && this.currentTaskId === taskId) {
+              this.runIteration(taskId).catch((retryErr) => {
+                const { message: retryMsg, stack: retryStack } =
+                  this.normalizeError(retryErr);
+                this.logger.error(
+                  `Retry iteration failed for task ${taskId}: ${retryMsg}`,
+                  retryStack,
+                );
+              });
+            }
+          }, 500);
+          return; // keep processing state
+        }
+        this.logger.warn(
+          `Processing interrupted for task ${taskId} after ${current} retries. Marking NEEDS_HELP.`,
+        );
+        await this.tasksService.update(taskId, {
+          status: TaskStatus.NEEDS_HELP,
+          error:
+            'Processing interrupted multiple times (model/tool aborted). You can resume or take over.',
+        });
       } else {
         this.logger.error(
-          `Error during task processing iteration for task ID: ${taskId} - ${error.message}`,
-          error.stack,
+          `Error in processing iteration for task ${taskId}: ${message}`,
+          stack,
         );
         await this.tasksService.update(taskId, {
           status: TaskStatus.FAILED,
+          error: message.slice(0, 500) || 'Processing error',
         });
-        this.isProcessing = false;
-        this.currentTaskId = null;
       }
+      delete this.retryCounts[taskId];
+      this.isProcessing = false;
+      this.currentTaskId = null;
     }
   }
 

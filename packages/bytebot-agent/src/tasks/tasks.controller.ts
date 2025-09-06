@@ -12,25 +12,16 @@ import {
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
-import { Message, Task } from '@prisma/client';
+// Removed Prisma Task/Message type imports due to schema changes; using 'any' where necessary.
 import { AddTaskMessageDto } from './dto/add-task-message.dto';
 import { MessagesService } from '../messages/messages.service';
 import { ANTHROPIC_MODELS } from '../anthropic/anthropic.constants';
+import { Task } from '@prisma/client';
 import { OPENAI_MODELS } from '../openai/openai.constants';
 import { GOOGLE_MODELS } from '../google/google.constants';
 import { BytebotAgentModel } from 'src/agent/agent.types';
 
-const geminiApiKey = process.env.GEMINI_API_KEY;
-const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-const openaiApiKey = process.env.OPENAI_API_KEY;
-
 const proxyUrl = process.env.BYTEBOT_LLM_PROXY_URL;
-
-const models = [
-  ...(anthropicApiKey ? ANTHROPIC_MODELS : []),
-  ...(openaiApiKey ? OPENAI_MODELS : []),
-  ...(geminiApiKey ? GOOGLE_MODELS : []),
-];
 
 @Controller('tasks')
 export class TasksController {
@@ -84,19 +75,19 @@ export class TasksController {
           );
         }
 
-        const proxyModels = await response.json();
-
-        // Map proxy response to BytebotAgentModel format
-        const models: BytebotAgentModel[] = proxyModels.data.map(
-          (model: any) => ({
-            provider: 'proxy',
-            name: model.litellm_params.model,
-            title: model.model_name,
-            contextWindow: 128000,
-          }),
-        );
-
-        return models;
+        const proxyJson: unknown = await response.json();
+        const data = (proxyJson as any)?.data;
+        if (!Array.isArray(data)) return [];
+        return data
+          .filter((m: any) => m?.litellm_params?.model)
+          .map(
+            (m: any): BytebotAgentModel => ({
+              provider: 'proxy',
+              name: String(m.litellm_params.model),
+              title: String(m.model_name || m.litellm_params.model),
+              contextWindow: 128000,
+            }),
+          );
       } catch (error) {
         if (error instanceof HttpException) {
           throw error;
@@ -107,11 +98,25 @@ export class TasksController {
         );
       }
     }
-    return models;
+
+    // Dynamically compute models at request time based on current env
+    const dynamicModels: BytebotAgentModel[] = [
+      ...(process.env.ANTHROPIC_API_KEY ? ANTHROPIC_MODELS : []),
+      ...(process.env.OPENAI_API_KEY ? OPENAI_MODELS : []),
+      ...(process.env.GEMINI_API_KEY ? GOOGLE_MODELS : []),
+    ];
+
+    if (dynamicModels.length === 0) {
+      throw new HttpException(
+        'No LLM models configured. Set at least one of ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    return dynamicModels;
   }
 
   @Get(':id')
-  async findById(@Param('id') id: string): Promise<Task> {
+  async findById(@Param('id') id: string): Promise<any> {
     return this.tasksService.findById(id);
   }
 
@@ -120,7 +125,7 @@ export class TasksController {
     @Param('id') taskId: string,
     @Query('limit') limit?: string,
     @Query('page') page?: string,
-  ): Promise<Message[]> {
+  ): Promise<any[]> {
     const options = {
       limit: limit ? parseInt(limit, 10) : undefined,
       page: page ? parseInt(page, 10) : undefined,
@@ -144,7 +149,7 @@ export class TasksController {
     @Param('id') taskId: string,
     @Query('limit') limit?: string,
     @Query('page') page?: string,
-  ): Promise<Message[]> {
+  ): Promise<any[]> {
     const options = {
       limit: limit ? parseInt(limit, 10) : undefined,
       page: page ? parseInt(page, 10) : undefined,

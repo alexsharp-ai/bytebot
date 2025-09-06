@@ -31,6 +31,15 @@ export class GoogleService implements BytebotAgentService {
   private readonly google: GoogleGenAI;
   private readonly logger = new Logger(GoogleService.name);
 
+  private normalizeError(e: unknown): { message: string; stack?: string } {
+    if (e instanceof Error) return { message: e.message, stack: e.stack };
+    try {
+      return { message: typeof e === 'string' ? e : JSON.stringify(e) };
+    } catch {
+      return { message: 'Unknown error' };
+    }
+  }
+
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
 
@@ -58,26 +67,34 @@ export class GoogleService implements BytebotAgentService {
       // Convert our message content blocks to Anthropic's expected format
       const googleMessages = this.formatMessagesForGoogle(messages);
 
-      const response: GenerateContentResponse =
-        await this.google.models.generateContent({
-          model,
-          contents: googleMessages,
-          config: {
-            thinkingConfig: {
-              thinkingBudget: 24576,
-            },
-            maxOutputTokens: maxTokens,
-            systemInstruction: systemPrompt,
-            tools: useTools
-              ? [
-                  {
-                    functionDeclarations: googleTools,
-                  },
-                ]
-              : [],
-            abortSignal: signal,
-          },
+      // If desktop automation backend missing, strip computer_* tools to prevent futile calls
+      let effectiveTools = googleTools;
+      if (!process.env.BYTEBOT_DESKTOP_BASE_URL) {
+        effectiveTools = googleTools.filter((t) => {
+          const n = t?.name || '';
+          return !n.startsWith('computer_') || n === 'computer_wait';
         });
+      }
+
+      const response: GenerateContentResponse = await this.google.models.generateContent({
+        model,
+        contents: googleMessages,
+        config: {
+          thinkingConfig: {
+            thinkingBudget: 24576,
+          },
+          maxOutputTokens: maxTokens,
+          systemInstruction: systemPrompt,
+          tools: useTools
+            ? [
+                {
+                  functionDeclarations: effectiveTools,
+                },
+              ]
+            : [],
+          abortSignal: signal,
+        },
+      });
 
       const candidate = response.candidates?.[0];
 
@@ -103,15 +120,16 @@ export class GoogleService implements BytebotAgentService {
           totalTokens: response.usageMetadata?.totalTokenCount || 0,
         },
       };
-    } catch (error) {
-      if (error.message.includes('AbortError')) {
+    } catch (err: unknown) {
+      const { message, stack } = this.normalizeError(err);
+      if (message.includes('AbortError')) {
         throw new BytebotAgentInterrupt();
       }
       this.logger.error(
-        `Error sending message to Google Gemini: ${error.message}`,
-        error.stack,
+        `Error sending message to Google Gemini: ${message}`,
+        stack,
       );
-      throw error;
+      throw err;
     }
   }
 
@@ -278,16 +296,18 @@ export class GoogleService implements BytebotAgentService {
         } as ThinkingContentBlock;
       }
 
-      if (part.functionCall) {
+    if (part.functionCall) {
         return {
           type: MessageContentType.ToolUse,
-          id: part.functionCall.id || uuid(),
+      id: (part.functionCall.id as string) || uuid(),
           name: part.functionCall.name,
           input: part.functionCall.args,
         } as ToolUseContentBlock;
       }
 
-      this.logger.warn(`Unknown content type from Google: ${part}`);
+      this.logger.warn(
+        `Unknown content type from Google: ${JSON.stringify(part)}`,
+      );
       return {
         type: MessageContentType.Text,
         text: JSON.stringify(part),

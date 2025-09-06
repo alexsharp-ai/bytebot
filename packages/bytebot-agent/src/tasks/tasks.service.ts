@@ -112,6 +112,13 @@ export class TasksService {
     });
 
     this.tasksGateway.emitTaskCreated(task);
+    // Emit a domain event so the scheduler can react immediately instead of waiting
+    // up to 5s for the next cron tick.
+    try {
+      this.eventEmitter.emit('task.created', { taskId: task.id });
+    } catch (e) {
+      this.logger.warn(`Failed to emit task.created event for ${task.id}: ${(e as any)?.message}`);
+    }
 
     return task;
   }
@@ -239,7 +246,9 @@ export class TasksService {
     }
 
     this.logger.log(`Successfully updated task ID: ${id}`);
-    this.logger.debug(`Updated task: ${JSON.stringify(updatedTask)}`);
+    this.logger.debug(
+      `Updated task: ${JSON.stringify({ ...updatedTask, error: (updateTaskDto as any).error })}`,
+    );
 
     this.tasksGateway.emitTaskUpdate(id, updatedTask);
 

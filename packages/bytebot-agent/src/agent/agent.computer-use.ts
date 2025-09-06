@@ -23,6 +23,15 @@ import {
 } from '@bytebot/shared';
 import { Logger } from '@nestjs/common';
 
+function toError(e: unknown): { message: string; stack?: string } {
+  if (e instanceof Error) return { message: e.message, stack: e.stack };
+  try {
+    return { message: typeof e === 'string' ? e : JSON.stringify(e) };
+  } catch {
+    return { message: 'Unknown error' };
+  }
+}
+
 const BYTEBOT_DESKTOP_BASE_URL = process.env.BYTEBOT_DESKTOP_BASE_URL as string;
 
 export async function handleComputerToolUse(
@@ -32,6 +41,24 @@ export async function handleComputerToolUse(
   logger.debug(
     `Handling computer tool use: ${block.name}, tool_use_id: ${block.id}`,
   );
+
+  // If desktop automation backend is not configured, short‑circuit with an error
+  if (!BYTEBOT_DESKTOP_BASE_URL) {
+    logger.warn(
+      `BYTEBOT_DESKTOP_BASE_URL not set. Rejecting computer tool use '${block.name}'.`,
+    );
+  return {
+      type: MessageContentType.ToolResult,
+      tool_use_id: block.id,
+      content: [
+        {
+          type: MessageContentType.Text,
+      text: `Desktop automation disabled (missing BYTEBOT_DESKTOP_BASE_URL). Cannot execute '${block.name}'.`,
+        },
+      ],
+      is_error: true,
+    };
+  }
 
   if (isScreenshotToolUseBlock(block)) {
     logger.debug('Processing screenshot request');
@@ -55,7 +82,8 @@ export async function handleComputerToolUse(
         ],
       };
     } catch (error) {
-      logger.error(`Screenshot failed: ${error.message}`, error.stack);
+      const { message, stack } = toError(error);
+      logger.error(`Screenshot failed: ${message}`, stack);
       return {
         type: MessageContentType.ToolResult,
         tool_use_id: block.id,
@@ -88,10 +116,8 @@ export async function handleComputerToolUse(
         ],
       };
     } catch (error) {
-      logger.error(
-        `Getting cursor position failed: ${error.message}`,
-        error.stack,
-      );
+      const { message, stack } = toError(error);
+      logger.error(`Getting cursor position failed: ${message}`, stack);
       return {
         type: MessageContentType.ToolResult,
         tool_use_id: block.id,
@@ -192,7 +218,8 @@ export async function handleComputerToolUse(
       image = await screenshot();
       logger.debug('Screenshot captured successfully');
     } catch (error) {
-      logger.error('Failed to take screenshot', error);
+      const { message } = toError(error);
+      logger.error('Failed to take screenshot', message);
     }
 
     logger.debug(`Tool execution successful for tool_use_id: ${block.id}`);
@@ -220,17 +247,15 @@ export async function handleComputerToolUse(
 
     return toolResult;
   } catch (error) {
-    logger.error(
-      `Error executing ${block.name} tool: ${error.message}`,
-      error.stack,
-    );
-    return {
+    const { message, stack } = toError(error);
+    logger.error(`Error executing ${block.name} tool: ${message}`, stack);
+  return {
       type: MessageContentType.ToolResult,
       tool_use_id: block.id,
       content: [
         {
           type: MessageContentType.Text,
-          text: `Error executing ${block.name} tool: ${error.message}`,
+          text: `Error executing ${block.name} tool: ${message}`,
         },
       ],
       is_error: true,
@@ -265,7 +290,7 @@ async function traceMouse(input: {
 }): Promise<void> {
   const { path, holdKeys } = input;
   console.log(
-    `Tracing mouse to path: ${path} ${holdKeys ? `with holdKeys: ${holdKeys}` : ''}`,
+    `Tracing mouse along ${path.length} points${holdKeys && holdKeys.length ? ` with holdKeys: ${holdKeys.join(',')}` : ''}`,
   );
 
   try {
@@ -292,7 +317,7 @@ async function clickMouse(input: {
 }): Promise<void> {
   const { coordinates, button, holdKeys, clickCount } = input;
   console.log(
-    `Clicking mouse ${button} ${clickCount} times ${coordinates ? `at coordinates: [${coordinates.x}, ${coordinates.y}] ` : ''} ${holdKeys ? `with holdKeys: ${holdKeys}` : ''}`,
+    `Clicking mouse ${button} x${clickCount}${coordinates ? ` at [${coordinates.x},${coordinates.y}]` : ''}${holdKeys && holdKeys.length ? ` with holdKeys: ${holdKeys.join(',')}` : ''}`,
   );
 
   try {
@@ -347,7 +372,7 @@ async function dragMouse(input: {
 }): Promise<void> {
   const { path, button, holdKeys } = input;
   console.log(
-    `Dragging mouse to path: ${path} ${holdKeys ? `with holdKeys: ${holdKeys}` : ''}`,
+    `Dragging mouse along ${path.length} points${holdKeys && holdKeys.length ? ` with holdKeys: ${holdKeys.join(',')}` : ''}`,
   );
 
   try {
@@ -401,7 +426,7 @@ async function typeKeys(input: {
   delay?: number;
 }): Promise<void> {
   const { keys, delay } = input;
-  console.log(`Typing keys: ${keys}`);
+  console.log(`Typing keys: ${keys.join(',')}`);
 
   try {
     await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
@@ -424,7 +449,7 @@ async function pressKeys(input: {
   press: Press;
 }): Promise<void> {
   const { keys, press } = input;
-  console.log(`Pressing keys: ${keys}`);
+  console.log(`Pressing keys: ${keys.join(',')}`);
 
   try {
     await fetch(`${BYTEBOT_DESKTOP_BASE_URL}/computer-use`, {
@@ -515,10 +540,15 @@ async function cursorPosition(): Promise<Coordinates> {
       }),
     });
 
-    const data = await response.json();
-    return { x: data.x, y: data.y };
+    const raw: unknown = await response.json();
+    const data = (raw && typeof raw === 'object' ? raw : {}) as Record<
+      string,
+      unknown
+    >;
+    return { x: Number(data.x) || 0, y: Number(data.y) || 0 };
   } catch (error) {
-    console.error('Error in cursor_position action:', error);
+  const { message } = toError(error);
+  console.error('Error in cursor_position action:', message);
     throw error;
   }
 }
@@ -541,15 +571,23 @@ async function screenshot(): Promise<string> {
       throw new Error(`Failed to take screenshot: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const raw: unknown = await response.json();
+    const data = (raw && typeof raw === 'object' ? raw : {}) as Record<
+      string,
+      unknown
+    >;
 
-    if (!data.image) {
+  if (!data.image) {
       throw new Error('Failed to take screenshot: No image data received');
     }
 
+    if (typeof data.image !== 'string') {
+      throw new Error('Screenshot image data not a string');
+    }
     return data.image; // Base64 encoded image
   } catch (error) {
-    console.error('Error in screenshot action:', error);
+    const { message } = toError(error);
+    console.error('Error in screenshot action:', message);
     throw error;
   }
 }
@@ -568,7 +606,8 @@ async function application(input: { application: string }): Promise<void> {
       }),
     });
   } catch (error) {
-    console.error('Error in application action:', error);
+    const { message } = toError(error);
+    console.error('Error in application action:', message);
     throw error;
   }
 }
@@ -598,13 +637,29 @@ async function readFile(input: { path: string }): Promise<{
       throw new Error(`Failed to read file: ${response.statusText}`);
     }
 
-    const data = await response.json();
-    return data;
+    const raw: unknown = await response.json();
+    const out = (raw && typeof raw === 'object' ? raw : {}) as {
+      success?: boolean;
+      data?: string;
+      name?: string;
+      size?: number;
+      mediaType?: string;
+      message?: string;
+    };
+    return {
+      success: Boolean(out.success),
+      data: out.data,
+      name: out.name,
+      size: out.size,
+      mediaType: out.mediaType,
+      message: out.message,
+    };
   } catch (error) {
-    console.error('Error in read_file action:', error);
+    const { message } = toError(error);
+    console.error('Error in read_file action:', message);
     return {
       success: false,
-      message: `Error reading file: ${error.message}`,
+      message: `Error reading file: ${message}`,
     };
   }
 }
@@ -634,13 +689,18 @@ export async function writeFile(input: {
       throw new Error(`Failed to write file: ${response.statusText}`);
     }
 
-    const data = await response.json();
-    return data;
+    const raw: unknown = await response.json();
+    const out = (raw && typeof raw === 'object' ? raw : {}) as {
+      success?: boolean;
+      message?: string;
+    };
+    return { success: Boolean(out.success), message: out.message };
   } catch (error) {
-    console.error('Error in write_file action:', error);
+    const { message } = toError(error);
+    console.error('Error in write_file action:', message);
     return {
       success: false,
-      message: `Error writing file: ${error.message}`,
+      message: `Error writing file: ${message}`,
     };
   }
 }

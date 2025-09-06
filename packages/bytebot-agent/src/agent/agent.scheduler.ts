@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { TasksService } from '../tasks/tasks.service';
 import { AgentProcessor } from './agent.processor';
@@ -17,6 +18,26 @@ export class AgentScheduler implements OnModuleInit {
   async onModuleInit() {
     this.logger.log('AgentScheduler initialized');
     await this.handleCron();
+  }
+
+  // React immediately when a task is created instead of waiting for cron
+  @OnEvent('task.created')
+  async onTaskCreated({ taskId }: { taskId: string }) {
+    this.logger.debug(`Received task.created event for ${taskId}`);
+    if (this.agentProcessor.isRunning()) return;
+    try {
+      const task = await this.tasksService.findById(taskId);
+      if (task.status === TaskStatus.PENDING) {
+        await this.tasksService.update(taskId, {
+          status: TaskStatus.RUNNING,
+          executedAt: new Date(),
+        });
+        this.logger.debug(`Immediately starting task ID: ${taskId}`);
+        this.agentProcessor.processTask(taskId);
+      }
+    } catch (e) {
+      this.logger.warn(`Failed immediate start for task ${taskId}: ${(e as Error).message}`);
+    }
   }
 
   @Cron(CronExpression.EVERY_5_SECONDS)

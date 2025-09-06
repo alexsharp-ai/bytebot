@@ -56,12 +56,23 @@ export default function Home() {
 
   useEffect(() => {
     fetch("/api/tasks/models")
-      .then((res) => res.json())
-      .then((data) => {
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(`Models request failed: ${res.status}`);
+        }
+        const data = await res.json();
+        if (!Array.isArray(data)) {
+          console.warn("Models response was not an array", data);
+          setModels([]);
+          return;
+        }
         setModels(data);
         if (data.length > 0) setSelectedModel(data[0]);
       })
-      .catch((err) => console.error("Failed to load models", err));
+      .catch((err) => {
+        console.error("Failed to load models", err);
+        setModels([]);
+      });
   }, []);
 
   // Close popover when clicking outside or pressing ESC
@@ -174,11 +185,13 @@ export default function Home() {
                       <SelectValue placeholder="Select a model" />
                     </SelectTrigger>
                     <SelectContent>
-                      {models.map((m) => (
+                      {Array.isArray(models) && models.length > 0 ? models.map((m) => (
                         <SelectItem key={m.name} value={m.name}>
                           {m.title}
                         </SelectItem>
-                      ))}
+                      )) : (
+                        <div className="px-2 py-1 text-sm text-muted-foreground">No models configured</div>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -232,11 +245,13 @@ export default function Home() {
                       <SelectValue placeholder="Select a model" />
                     </SelectTrigger>
                     <SelectContent>
-                      {models.map((m) => (
+                      {Array.isArray(models) && models.length > 0 ? models.map((m) => (
                         <SelectItem key={m.name} value={m.name}>
                           {m.title}
                         </SelectItem>
-                      ))}
+                      )) : (
+                        <div className="px-2 py-1 text-sm text-muted-foreground">No models configured</div>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>

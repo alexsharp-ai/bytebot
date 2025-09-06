@@ -18,4 +18,7 @@ export class UpdateTaskDto {
 
   @IsOptional()
   completedAt?: Date;
+
+  @IsOptional()
+  error?: string;
 }
