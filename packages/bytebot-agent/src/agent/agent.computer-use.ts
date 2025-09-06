@@ -47,13 +47,13 @@ export async function handleComputerToolUse(
     logger.warn(
       `BYTEBOT_DESKTOP_BASE_URL not set. Rejecting computer tool use '${block.name}'.`,
     );
-  return {
+    return {
       type: MessageContentType.ToolResult,
       tool_use_id: block.id,
       content: [
         {
           type: MessageContentType.Text,
-      text: `Desktop automation disabled (missing BYTEBOT_DESKTOP_BASE_URL). Cannot execute '${block.name}'.`,
+          text: `Desktop automation disabled (missing BYTEBOT_DESKTOP_BASE_URL). Cannot execute '${block.name}'.`,
         },
       ],
       is_error: true,
@@ -84,7 +84,7 @@ export async function handleComputerToolUse(
     } catch (error) {
       const { message, stack } = toError(error);
       logger.error(`Screenshot failed: ${message}`, stack);
-      return {
+  return {
         type: MessageContentType.ToolResult,
         tool_use_id: block.id,
         content: [
@@ -547,8 +547,8 @@ async function cursorPosition(): Promise<Coordinates> {
     >;
     return { x: Number(data.x) || 0, y: Number(data.y) || 0 };
   } catch (error) {
-  const { message } = toError(error);
-  console.error('Error in cursor_position action:', message);
+    const { message } = toError(error);
+    console.error('Error in cursor_position action:', message);
     throw error;
   }
 }

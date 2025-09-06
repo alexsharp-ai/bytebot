@@ -26,6 +26,21 @@ import {
 import { v4 as uuid } from 'uuid';
 import { DEFAULT_MODEL } from './google.constants';
 
+// Narrowing helper for Gemini Part objects that include a functionCall
+type FunctionCallLike = {
+  id?: unknown;
+  name?: unknown;
+  args?: unknown;
+};
+
+function isFunctionCallPart(
+  part: Part,
+): part is Part & { functionCall: FunctionCallLike } {
+  const fc: unknown = (part as unknown as { functionCall?: unknown })
+    .functionCall;
+  return typeof fc === 'object' && fc !== null;
+}
+
 @Injectable()
 export class GoogleService implements BytebotAgentService {
   private readonly google: GoogleGenAI;
@@ -76,25 +91,26 @@ export class GoogleService implements BytebotAgentService {
         });
       }
 
-      const response: GenerateContentResponse = await this.google.models.generateContent({
-        model,
-        contents: googleMessages,
-        config: {
-          thinkingConfig: {
-            thinkingBudget: 24576,
+      const response: GenerateContentResponse =
+        await this.google.models.generateContent({
+          model,
+          contents: googleMessages,
+          config: {
+            thinkingConfig: {
+              thinkingBudget: 24576,
+            },
+            maxOutputTokens: maxTokens,
+            systemInstruction: systemPrompt,
+            tools: useTools
+              ? [
+                  {
+                    functionDeclarations: effectiveTools,
+                  },
+                ]
+              : [],
+            abortSignal: signal,
           },
-          maxOutputTokens: maxTokens,
-          systemInstruction: systemPrompt,
-          tools: useTools
-            ? [
-                {
-                  functionDeclarations: effectiveTools,
-                },
-              ]
-            : [],
-          abortSignal: signal,
-        },
-      });
+        });
 
       const candidate = response.candidates?.[0];
 
@@ -281,31 +297,64 @@ export class GoogleService implements BytebotAgentService {
    */
   private formatGoogleResponse(parts: Part[]): MessageContentBlock[] {
     return parts.map((part) => {
-      if (part.text) {
+      // Plain text
+      if (
+        typeof part.text === 'string' &&
+        !part.functionCall &&
+        !part.thought
+      ) {
         return {
           type: MessageContentType.Text,
           text: part.text,
         } as TextContentBlock;
       }
 
+      // Thinking block
       if (part.thought) {
         return {
           type: MessageContentType.Thinking,
-          signature: part.thoughtSignature,
-          thinking: part.text,
+          signature:
+            typeof (part as unknown as { thoughtSignature?: unknown })
+              .thoughtSignature === 'string'
+              ? (part as unknown as { thoughtSignature: string })
+                  .thoughtSignature
+              : undefined,
+          thinking: typeof part.text === 'string' ? part.text : '',
         } as ThinkingContentBlock;
       }
 
-      if (part.functionCall) {
-        const idVal = part.functionCall.id;
+      // Function / tool call
+      if (isFunctionCallPart(part)) {
+        const raw: FunctionCallLike = part.functionCall;
+        const idRaw: unknown = raw.id;
+        const nameRaw: unknown = raw.name;
+        const argsRaw: unknown = raw.args;
+
+  // uuid() is a well-typed external utility; suppress strict error-type lint false positives
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
+  const createId = (): string => uuid();
+        const safeId: string =
+          typeof idRaw === 'string' && idRaw.trim().length > 0
+            ? idRaw
+            : createId();
+        const safeName: string =
+          typeof nameRaw === 'string' && nameRaw.trim().length > 0
+            ? nameRaw
+            : 'unknown_tool';
+        const safeArgs: Record<string, unknown> =
+          argsRaw && typeof argsRaw === 'object' && !Array.isArray(argsRaw)
+            ? (argsRaw as Record<string, unknown>)
+            : {};
+
         return {
           type: MessageContentType.ToolUse,
-          id: typeof idVal === 'string' && idVal.length > 0 ? idVal : uuid(),
-          name: part.functionCall.name,
-          input: part.functionCall.args,
+          id: safeId,
+          name: safeName,
+          input: safeArgs,
         } as ToolUseContentBlock;
       }
 
+      // Fallback - log once for visibility
       this.logger.warn(
         `Unknown content type from Google: ${JSON.stringify(part)}`,
       );

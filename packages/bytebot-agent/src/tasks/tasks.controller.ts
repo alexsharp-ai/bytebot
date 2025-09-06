@@ -89,7 +89,7 @@ export class TasksController {
         if (!Array.isArray(data)) return [];
         const safe: ProxyModelRecord[] = data.filter(
           (m): m is ProxyModelRecord =>
-            !!m && typeof m === 'object' && 'litellm_params' in (m as any),
+            !!m && typeof m === 'object' && 'litellm_params' in m,
         );
         return safe
           .filter((m) => m.litellm_params?.model)

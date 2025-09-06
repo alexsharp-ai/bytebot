@@ -332,7 +332,8 @@ export class AgentProcessor {
             `Generated summary for task ${taskId} due to token usage (${agentResponse.tokenUsage.totalTokens}/${contextWindow})`,
           );
         } catch (error: unknown) {
-          const { message: sumMsg, stack: sumStack } = this.normalizeError(error);
+          const { message: sumMsg, stack: sumStack } =
+            this.normalizeError(error);
           this.logger.error(
             `Error summarizing messages for task ${taskId}: ${sumMsg}`,
             sumStack,

@@ -43,7 +43,6 @@ export class TasksService {
     );
 
     const task = await this.prisma.$transaction(async (prisma) => {
-      // Create the task first
       this.logger.debug('Creating task record in database');
       const task = await prisma.task.create({
         data: {
@@ -52,13 +51,7 @@ export class TasksService {
           priority: createTaskDto.priority || TaskPriority.MEDIUM,
           status: TaskStatus.PENDING,
           createdBy: createTaskDto.createdBy || Role.USER,
-          // Model stored as JSON/any from DTO; coerce to string name if object
-          model:
-            typeof createTaskDto.model === 'string'
-              ? createTaskDto.model
-              : (createTaskDto.model && typeof createTaskDto.model === 'object' && 'name' in createTaskDto.model && typeof (createTaskDto.model as any).name === 'string'
-                  ? (createTaskDto.model as any).name
-                  : 'unknown'),
+          model: normalizeModelName(createTaskDto.model),
           ...(createTaskDto.scheduledFor
             ? { scheduledFor: createTaskDto.scheduledFor }
             : {}),
@@ -75,7 +68,7 @@ export class TasksService {
         );
         filesDescription += `\n`;
 
-        const filePromises = createTaskDto.files.map((file) => {
+  const filePromises = createTaskDto.files.map((file) => {
           // Extract base64 data without the data URL prefix
           const base64Data = file.base64.includes('base64,')
             ? file.base64.split('base64,')[1]
@@ -409,4 +402,16 @@ export class TasksService {
 
     return updatedTask;
   }
+
+  // ... rest of class unchanged ...
+}
+
+function normalizeModelName(input: unknown): string {
+  if (!input) return 'unknown';
+  if (typeof input === 'string') return input;
+  if (typeof input === 'object') {
+    const maybe = (input as Record<string, unknown>).name;
+    if (typeof maybe === 'string') return maybe;
+  }
+  return 'unknown';
 }
