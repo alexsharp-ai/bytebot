@@ -13,6 +13,13 @@ export const OPENAI_MODELS: BytebotAgentModel[] = [
     title: 'GPT-4.1',
     contextWindow: 1047576,
   },
+  // Example additional model (adjust name/contextWindow as needed)
+  {
+    provider: 'openai',
+    name: 'gpt-4.1-mini-2025-04-14',
+    title: 'GPT-4.1 Mini',
+    contextWindow: 512000,
+  },
 ];
 
 export const DEFAULT_MODEL = OPENAI_MODELS[0];
