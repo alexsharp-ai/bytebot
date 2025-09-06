@@ -296,10 +296,11 @@ export class GoogleService implements BytebotAgentService {
         } as ThinkingContentBlock;
       }
 
-    if (part.functionCall) {
+      if (part.functionCall) {
+        const idVal = part.functionCall.id;
         return {
           type: MessageContentType.ToolUse,
-      id: (part.functionCall.id as string) || uuid(),
+          id: typeof idVal === 'string' && idVal.length > 0 ? idVal : uuid(),
           name: part.functionCall.name,
           input: part.functionCall.args,
         } as ToolUseContentBlock;

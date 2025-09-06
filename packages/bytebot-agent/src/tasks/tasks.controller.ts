@@ -21,6 +21,12 @@ import { OPENAI_MODELS } from '../openai/openai.constants';
 import { GOOGLE_MODELS } from '../google/google.constants';
 import { BytebotAgentModel } from 'src/agent/agent.types';
 
+interface ProxyModelRecord {
+  litellm_params?: { model?: string };
+  model_name?: string;
+  [k: string]: unknown;
+}
+
 const proxyUrl = process.env.BYTEBOT_LLM_PROXY_URL;
 
 @Controller('tasks')
@@ -76,24 +82,33 @@ export class TasksController {
         }
 
         const proxyJson: unknown = await response.json();
-        const data = (proxyJson as any)?.data;
+        const data =
+          proxyJson && typeof proxyJson === 'object'
+            ? (proxyJson as { data?: unknown }).data
+            : undefined;
         if (!Array.isArray(data)) return [];
-        return data
-          .filter((m: any) => m?.litellm_params?.model)
-          .map(
-            (m: any): BytebotAgentModel => ({
+        const safe: ProxyModelRecord[] = data.filter(
+          (m): m is ProxyModelRecord =>
+            !!m && typeof m === 'object' && 'litellm_params' in (m as any),
+        );
+        return safe
+          .filter((m) => m.litellm_params?.model)
+          .map((m) => {
+            const modelName = m.litellm_params?.model || 'unknown';
+            return {
               provider: 'proxy',
-              name: String(m.litellm_params.model),
-              title: String(m.model_name || m.litellm_params.model),
+              name: modelName,
+              title: String(m.model_name || modelName),
               contextWindow: 128000,
-            }),
-          );
-      } catch (error) {
-        if (error instanceof HttpException) {
-          throw error;
+            } as BytebotAgentModel;
+          });
+      } catch (err: unknown) {
+        if (err instanceof HttpException) {
+          throw err;
         }
+        const msg = err instanceof Error ? err.message : String(err);
         throw new HttpException(
-          `Error fetching models: ${error.message}`,
+          `Error fetching models: ${msg}`,
           HttpStatus.INTERNAL_SERVER_ERROR,
         );
       }

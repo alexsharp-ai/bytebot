@@ -36,7 +36,8 @@ export class AgentScheduler implements OnModuleInit {
         this.agentProcessor.processTask(taskId);
       }
     } catch (e) {
-      this.logger.warn(`Failed immediate start for task ${taskId}: ${(e as Error).message}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`Failed immediate start for task ${taskId}: ${msg}`);
     }
   }
 
@@ -47,7 +48,7 @@ export class AgentScheduler implements OnModuleInit {
     for (const scheduledTask of scheduledTasks) {
       if (scheduledTask.scheduledFor && scheduledTask.scheduledFor < now) {
         this.logger.debug(
-          `Task ID: ${scheduledTask.id} is scheduled for ${scheduledTask.scheduledFor}, queuing it`,
+          `Task ID: ${scheduledTask.id} is scheduled for ${scheduledTask.scheduledFor.toISOString()}, queuing it`,
         );
         await this.tasksService.update(scheduledTask.id, {
           queuedAt: now,

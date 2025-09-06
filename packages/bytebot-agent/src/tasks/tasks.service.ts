@@ -52,7 +52,13 @@ export class TasksService {
           priority: createTaskDto.priority || TaskPriority.MEDIUM,
           status: TaskStatus.PENDING,
           createdBy: createTaskDto.createdBy || Role.USER,
-          model: createTaskDto.model,
+          // Model stored as JSON/any from DTO; coerce to string name if object
+          model:
+            typeof createTaskDto.model === 'string'
+              ? createTaskDto.model
+              : (createTaskDto.model && typeof createTaskDto.model === 'object' && 'name' in createTaskDto.model && typeof (createTaskDto.model as any).name === 'string'
+                  ? (createTaskDto.model as any).name
+                  : 'unknown'),
           ...(createTaskDto.scheduledFor
             ? { scheduledFor: createTaskDto.scheduledFor }
             : {}),
@@ -117,7 +123,10 @@ export class TasksService {
     try {
       this.eventEmitter.emit('task.created', { taskId: task.id });
     } catch (e) {
-      this.logger.warn(`Failed to emit task.created event for ${task.id}: ${(e as any)?.message}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `Failed to emit task.created event for ${task.id}: ${msg}`,
+      );
     }
 
     return task;
@@ -214,9 +223,11 @@ export class TasksService {
 
       this.logger.debug(`Retrieved task with ID: ${id}`);
       return task;
-    } catch (error: any) {
-      this.logger.error(`Error retrieving task ID: ${id} - ${error.message}`);
-      this.logger.error(error.stack);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Error retrieving task ID: ${id} - ${msg}`);
+      if (stack) this.logger.error(stack);
       throw error;
     }
   }
@@ -247,7 +258,7 @@ export class TasksService {
 
     this.logger.log(`Successfully updated task ID: ${id}`);
     this.logger.debug(
-      `Updated task: ${JSON.stringify({ ...updatedTask, error: (updateTaskDto as any).error })}`,
+      `Updated task: ${JSON.stringify({ ...updatedTask, error: (updateTaskDto as unknown as { error?: string }).error })}`,
     );
 
     this.tasksGateway.emitTaskUpdate(id, updatedTask);
