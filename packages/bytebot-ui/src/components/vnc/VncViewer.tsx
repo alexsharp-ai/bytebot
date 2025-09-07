@@ -29,7 +29,10 @@ export function VncViewer({ viewOnly = true }: VncViewerProps) {
 
   useEffect(() => {
     if (typeof window === "undefined") return; // SSR safety‑net
-    const envUrl = process.env.BYTEBOT_DESKTOP_VNC_URL;
+    // In Next.js client components only NEXT_PUBLIC_* vars are embedded.
+    const envUrl =
+      process.env.NEXT_PUBLIC_DESKTOP_VNC_URL ||
+      process.env.BYTEBOT_DESKTOP_VNC_URL; // fallback if manually inlined
     if (envUrl) {
       setWsUrl(envUrl);
       return;

@@ -84,7 +84,7 @@ export async function handleComputerToolUse(
     } catch (error) {
       const { message, stack } = toError(error);
       logger.error(`Screenshot failed: ${message}`, stack);
-  return {
+      return {
         type: MessageContentType.ToolResult,
         tool_use_id: block.id,
         content: [
@@ -115,7 +115,7 @@ export async function handleComputerToolUse(
           },
         ],
       };
-    } catch (error) {
+  } catch (error) {
       const { message, stack } = toError(error);
       logger.error(`Getting cursor position failed: ${message}`, stack);
       return {
@@ -249,7 +249,7 @@ export async function handleComputerToolUse(
   } catch (error) {
     const { message, stack } = toError(error);
     logger.error(`Error executing ${block.name} tool: ${message}`, stack);
-  return {
+    return {
       type: MessageContentType.ToolResult,
       tool_use_id: block.id,
       content: [
@@ -576,7 +576,6 @@ async function screenshot(): Promise<string> {
       string,
       unknown
     >;
-
   if (!data.image) {
       throw new Error('Failed to take screenshot: No image data received');
     }

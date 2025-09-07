@@ -11,7 +11,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-// Corrected import path (was summaries.modue) - using summaries.module
+// Corrected import path (was summaries.module misspelled previously)
 import { SummariesModule } from './summaries/summaries.module';
 import { ProxyModule } from './proxy/proxy.module';
 

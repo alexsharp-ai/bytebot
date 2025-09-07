@@ -329,7 +329,6 @@ export class GoogleService implements BytebotAgentService {
         const idRaw: unknown = raw.id;
         const nameRaw: unknown = raw.name;
         const argsRaw: unknown = raw.args;
-
   // uuid() is a well-typed external utility; suppress strict error-type lint false positives
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
   const createId = (): string => uuid();

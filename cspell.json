@@ -6,7 +6,13 @@
     "bytebot",
     "BYTEBOT",
     "tooluse",
-    "toolresult"
+    "toolresult",
+    "websockify",
+    "litellm",
+    "genai",
+    "thallesp",
+  "borderw",
+  "unsummarized"
   ],
   "ignorePaths": [
     "node_modules",

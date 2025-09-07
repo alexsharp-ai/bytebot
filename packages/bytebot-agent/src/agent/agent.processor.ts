@@ -207,7 +207,51 @@ export class AgentProcessor {
         `Sending ${messages.length} messages to LLM for processing`,
       );
 
-      const model = task.model as unknown as BytebotAgentModel;
+      const rawModel = task.model as unknown;
+      let model: BytebotAgentModel;
+      if (
+        rawModel &&
+        typeof rawModel === 'object' &&
+        !Array.isArray(rawModel)
+      ) {
+        const obj = rawModel as Record<string, unknown>;
+        if (typeof obj.provider === 'string' && typeof obj.name === 'string') {
+          model = {
+            provider: obj.provider as BytebotAgentModel['provider'],
+            name: String(obj.name),
+            title: typeof obj.title === 'string' ? obj.title : String(obj.name),
+            contextWindow:
+              typeof obj.contextWindow === 'number'
+                ? obj.contextWindow
+                : undefined,
+          };
+        } else if (typeof obj.name === 'string') {
+          const name = String(obj.name);
+          model = {
+            provider: inferProvider(name),
+            name,
+            title: typeof obj.title === 'string' ? obj.title : name,
+          };
+        } else {
+          model = {
+            provider: 'openai',
+            name: 'gpt-4.1-mini',
+            title: 'gpt-4.1-mini',
+          };
+        }
+      } else if (typeof rawModel === 'string') {
+        model = {
+          provider: inferProvider(rawModel),
+          name: rawModel,
+          title: rawModel,
+        };
+      } else {
+        model = {
+          provider: 'openai',
+          name: 'gpt-4.1-mini',
+          title: 'gpt-4.1-mini',
+        };
+      }
       let agentResponse: BytebotAgentResponse;
 
       const service = this.services[model.provider];
@@ -519,4 +563,13 @@ export class AgentProcessor {
     this.isProcessing = false;
     this.currentTaskId = null;
   }
+}
+
+function inferProvider(
+  name: string,
+): 'anthropic' | 'openai' | 'google' | 'proxy' {
+  if (name.startsWith('claude')) return 'anthropic';
+  if (name.startsWith('gemini')) return 'google';
+  if (name.startsWith('gpt-') || name.includes('openai')) return 'openai';
+  return 'proxy';
 }

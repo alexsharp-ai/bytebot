@@ -44,6 +44,7 @@ export class TasksService {
 
     const task = await this.prisma.$transaction(async (prisma) => {
       this.logger.debug('Creating task record in database');
+      const modelJson = buildModelObject(createTaskDto.model);
       const task = await prisma.task.create({
         data: {
           description: createTaskDto.description,
@@ -51,7 +52,7 @@ export class TasksService {
           priority: createTaskDto.priority || TaskPriority.MEDIUM,
           status: TaskStatus.PENDING,
           createdBy: createTaskDto.createdBy || Role.USER,
-          model: normalizeModelName(createTaskDto.model),
+          model: modelJson as Prisma.InputJsonValue,
           ...(createTaskDto.scheduledFor
             ? { scheduledFor: createTaskDto.scheduledFor }
             : {}),
@@ -66,7 +67,7 @@ export class TasksService {
         this.logger.debug(
           `Saving ${createTaskDto.files.length} file(s) for task ID: ${task.id}`,
         );
-        filesDescription += `\n`;
+  filesDescription += `\n`;
 
   const filePromises = createTaskDto.files.map((file) => {
           // Extract base64 data without the data URL prefix
@@ -406,12 +407,22 @@ export class TasksService {
   // ... rest of class unchanged ...
 }
 
-function normalizeModelName(input: unknown): string {
-  if (!input) return 'unknown';
-  if (typeof input === 'string') return input;
-  if (typeof input === 'object') {
-    const maybe = (input as Record<string, unknown>).name;
-    if (typeof maybe === 'string') return maybe;
+function buildModelObject(input: unknown): Record<string, unknown> {
+  // Accept already well-formed object
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    const obj = input as Record<string, unknown>;
+    if (typeof obj.provider === 'string' && typeof obj.name === 'string') {
+      return obj;
+    }
   }
-  return 'unknown';
+  // If string, attempt provider inference
+  if (typeof input === 'string') {
+    const name = input;
+    let provider: string = 'proxy';
+    if (name.startsWith('gpt-') || name.startsWith('o')) provider = 'openai';
+    if (name.startsWith('claude')) provider = 'anthropic';
+    if (name.startsWith('gemini')) provider = 'google';
+    return { provider, name, title: name };
+  }
+  return { provider: 'proxy', name: 'unknown', title: 'Unknown Model' };
 }
